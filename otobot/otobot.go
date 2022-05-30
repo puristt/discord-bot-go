@@ -4,20 +4,22 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/puristt/discord-bot-go/config"
+	"github.com/puristt/discord-bot-go/mux"
+	"github.com/puristt/discord-bot-go/youtube"
 )
 
-func InitOtobot(cfg *config.Config) {
+//initializes the discord bot.
+func InitOtobot(cfg *config.Config, router *mux.Mux, youtubeAPI *youtube.YoutubeAPI) {
 	dcSession, err := discordgo.New("Bot " + cfg.Discord.Token)
 	if err != nil {
 		log.Fatal("Error while creating bot instance : ", err.Error())
 	}
 
-	dcSession.AddHandler(onMessageCreate)
+	dcSession.AddHandler(router.OnMessageCreate)
 
 	dcSession.Open()
 
@@ -27,11 +29,4 @@ func InitOtobot(cfg *config.Config) {
 	<-sc
 
 	dcSession.Close()
-}
-
-func onMessageCreate(ds *discordgo.Session, dm *discordgo.MessageCreate) {
-
-	if strings.Contains("blitz", dm.Content) {
-		ds.ChannelMessageSend(dm.ChannelID, "Gaza geldim, hizmete hazirim!")
-	}
 }

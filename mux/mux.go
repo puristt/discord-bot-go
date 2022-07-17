@@ -4,9 +4,11 @@
 package mux
 
 import (
+	"log"
 	"strings"
 
 	"github.com/bwmarrin/discordgo"
+	"github.com/puristt/discord-bot-go/otobot"
 )
 
 // Route holds information about a specific message route handler
@@ -46,12 +48,26 @@ func (m *Mux) Route(pattern, desc string, cb HandlerFunc) (*Route, error) {
 	return &r, nil
 }
 
-// OnMessageCreate is a DiscordGo Event Handler function.  This must be
+// OnMessageCreate is a DiscordGo Event Handler function. This must be
 // registered using the DiscordGo.Session.AddHandler function.  This function
 // will receive all Discord messages and parse them for matches to registered
 // routes.
 func (m *Mux) OnMessageCreate(ds *discordgo.Session, dm *discordgo.MessageCreate) {
+	// This isn't required in this specific example but it's a good practice.
+	if dm.Author.ID == ds.State.User.ID {
+		return
+	}
+
 	if strings.Contains("blitz", dm.Content) {
 		ds.ChannelMessageSend(dm.ChannelID, "Gaza geldim, hizmete hazirim!")
+	}
+
+	if strings.HasPrefix(dm.Content, "!play") {
+		log.Println("yey")
+		query := strings.Trim(dm.Content, "!play ")
+		if strings.Compare(query, "") == 0 {
+			return
+		}
+		otobot.PlayRequestedSong(ds, dm)
 	}
 }

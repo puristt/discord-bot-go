@@ -22,7 +22,7 @@ var youtubeAPI *youtube.YoutubeAPI
 
 func main() {
 	ctx := context.Background()
-	config.InitConfig(&cfg, "config\\config.json")
+	config.InitConfig(&cfg, "config/config.json")
 
 	youtubeAPI = youtube.NewYoutubeAPI(cfg.Youtube.ApiKey, ctx)
 	//youtubeAPI.GetSearchResults("boating")

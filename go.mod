@@ -5,6 +5,7 @@ go 1.17
 require (
 	github.com/Workiva/go-datastructures v1.0.53
 	github.com/bwmarrin/discordgo v0.25.0
+	github.com/hraban/opus v0.0.0-20220302220929-eeacdbcb92d0
 	google.golang.org/api v0.81.0
 )
 

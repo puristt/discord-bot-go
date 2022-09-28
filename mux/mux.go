@@ -68,6 +68,6 @@ func (m *Mux) OnMessageCreate(ds *discordgo.Session, dm *discordgo.MessageCreate
 		if strings.Compare(query, "") == 0 {
 			return
 		}
-		otobot.PlayRequestedSong(ds, dm)
+		otobot.PlayRequestedSong(query, ds, dm)
 	}
 }

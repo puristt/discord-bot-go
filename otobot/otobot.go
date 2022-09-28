@@ -1,14 +1,27 @@
 package otobot
 
 import (
+	"bufio"
 	"container/list"
+	"encoding/binary"
 	"fmt"
+	"io"
 	"log"
+	"os/exec"
+	"strconv"
 
 	"github.com/Workiva/go-datastructures/queue"
 	"github.com/bwmarrin/discordgo"
+	"github.com/hraban/opus"
 	"github.com/puristt/discord-bot-go/config"
 	"github.com/puristt/discord-bot-go/youtube"
+)
+
+const (
+	channels  int = 2 // 1 for mono, 2 for stereo
+	frameRate int = 48000
+	frameSize int = 960                 // uint16 size of each audio frame
+	maxBytes  int = (frameSize * 2) * 2 // max size of opus data
 )
 
 type VoiceInstance struct {
@@ -39,7 +52,7 @@ var (
 	vi    *VoiceInstance
 )
 
-//initializes the discord bot.
+// initializes the discord bot.
 func InitOtobot(config *config.Config, s *discordgo.Session, youtubeAPI *youtube.YoutubeAPI) {
 	ytube = youtubeAPI
 	cfg = config
@@ -55,13 +68,57 @@ func InitOtobot(config *config.Config, s *discordgo.Session, youtubeAPI *youtube
 	}
 }
 
-func PlayRequestedSong(ds *discordgo.Session, dm *discordgo.MessageCreate) {
-	vi.validateMessageAndJoinVoiceChannel(ds, dm)
+func PlayRequestedSong(query string, ds *discordgo.Session, dm *discordgo.MessageCreate) {
+	if !vi.validateMessageAndJoinVoiceChannel(ds, dm) {
+		return
+	}
+
+	videoPath, err := ytube.DownloadVideo(query)
+	if err != nil {
+		fmt.Errorf("error occured while downloading %v", err)
+	}
+
+	ffmpeg := exec.Command("ffmpeg", "-i", videoPath, "-f", "s16le", "-ar",
+		strconv.Itoa(frameRate), "-ac", strconv.Itoa(channels), "pipe:1")
+
+	ffmpegOut, err := ffmpeg.StdoutPipe()
+	if err != nil {
+		log.Printf("StdoutPipe err : %v", err)
+	}
+
+	ffmpegBuf := bufio.NewReaderSize(ffmpegOut, 16384)
+	if err := ffmpeg.Start(); err != nil {
+		log.Printf("Ffmpeg Pipe run err : %v", err)
+		return
+	}
+
+	sendChan := make(chan []int16, 2)
+	go func() {
+		SendPCM(vi.dvc, sendChan)
+	}()
+
+	for {
+		// read data from ffmpeg stdout
+		audioBuf := make([]int16, frameSize*channels)
+		err = binary.Read(ffmpegBuf, binary.LittleEndian, &audioBuf)
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			return
+		}
+		if err != nil {
+			log.Printf("error reading from ffmpeg stdout %v", err)
+			return
+		}
+
+		// Send received PCM to the sendPCM channel
+		select {
+		case sendChan <- audioBuf:
+		}
+	}
 }
 
-//validateMessageAndJoinVoiceChannel validates user message and checks if user is in any voice channel. Then joins
-//bot to the voice channel by calling joinVoiceChannel function.
-//If bot is joined to the voice channel successfully, returns true; otherwise false.
+// validateMessageAndJoinVoiceChannel validates user message and checks if user is in any voice channel. Then joins
+// bot to the voice channel by calling joinVoiceChannel function.
+// If bot is joined to the voice channel successfully, returns true; otherwise false.
 func (vi *VoiceInstance) validateMessageAndJoinVoiceChannel(ds *discordgo.Session, dm *discordgo.MessageCreate) bool {
 	dg, err := vi.getDcGuildByMessage(ds, dm)
 	if err != nil {
@@ -101,7 +158,7 @@ func (vi *VoiceInstance) getDcGuildByMessage(ds *discordgo.Session, dm *discordg
 	return dg, nil
 }
 
-//checks if author is in any voice channel
+// checks if author is in any voice channel
 func (vi *VoiceInstance) isUserInVoiceChannel(dm *discordgo.MessageCreate, dg *discordgo.Guild) bool {
 	for _, vs := range dg.VoiceStates {
 		if vs.UserID == dm.Author.ID {
@@ -112,7 +169,7 @@ func (vi *VoiceInstance) isUserInVoiceChannel(dm *discordgo.MessageCreate, dg *d
 	return false
 }
 
-//joins bot to the specified voice channel in VoiceInstance.
+// joins bot to the specified voice channel in VoiceInstance.
 func (vi *VoiceInstance) joinVoiceChannel(ds *discordgo.Session, dm *discordgo.MessageCreate, dg *discordgo.Guild) bool {
 	for _, vs := range dg.VoiceStates {
 		if vs.UserID == dm.Author.ID {
@@ -129,4 +186,37 @@ func (vi *VoiceInstance) joinVoiceChannel(ds *discordgo.Session, dm *discordgo.M
 	}
 
 	return false
+}
+
+func SendPCM(dvc *discordgo.VoiceConnection, pcm <-chan []int16) {
+	if pcm == nil {
+		return
+	}
+
+	opusEnc, err := opus.NewEncoder(frameRate, 2, opus.AppAudio)
+	if err != nil {
+		log.Printf("Error while creating opus encoder : %v", err)
+		return
+	}
+
+	for {
+		rcv, ok := <-pcm
+		if !ok {
+			log.Println("PCM channel closed")
+			return
+		}
+
+		opusData := make([]byte, maxBytes)
+		n, err := opusEnc.Encode(rcv, opusData)
+		if err != nil {
+			log.Printf("Error while encoding pcm data : %v", err)
+			return
+		}
+		opusData = opusData[:n] // only the first N bytes are opus data. Just like io.Reader.
+		if dvc.Ready == false || dvc.OpusSend == nil {
+			return
+		}
+
+		dvc.OpusSend <- opusData
+	}
 }

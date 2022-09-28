@@ -26,7 +26,7 @@ func main() {
 
 	youtubeAPI = youtube.NewYoutubeAPI(cfg.Youtube.ApiKey, ctx)
 	//youtubeAPI.GetSearchResults("boating")
-	youtubeAPI.PlayVideo("boatindsgssdagasddgsdgsadgsadgsagdsgdsadgsagdsagsdagdsgdsgdsgsaddsgasdjhfadjgfjhfgh1012g")
+	//youtubeAPI.DownloadVideo("boatindsgssdagasddgsdgsadgsadgsagdsgdsadgsagdsagsdagdsgdsgdsgsaddsgasdjhfadjgfjhfgh1012g")
 	Init()
 
 }
@@ -39,7 +39,10 @@ func Init() {
 
 	dcSession.AddHandler(Router.OnMessageCreate)
 
-	dcSession.Open()
+	if err := dcSession.Open(); err != nil {
+		log.Printf("error while openin dc session : %v", err)
+		//dcSession.Close()
+	}
 	otobot.InitOtobot(&cfg, dcSession, youtubeAPI)
 	log.Println("Otobot is running. Press Ctrl-C to exit.")
 	sc := make(chan os.Signal, 1)

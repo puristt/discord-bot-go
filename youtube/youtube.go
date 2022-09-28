@@ -3,7 +3,9 @@ package youtube
 import (
 	"context"
 	"errors"
+	"github.com/puristt/discord-bot-go/util"
 	"log"
+	"os/exec"
 
 	"google.golang.org/api/option"
 	"google.golang.org/api/youtube/v3"
@@ -24,7 +26,7 @@ type SearchResult struct {
 	VideoID    string
 	VideoTitle string
 	Duration   string
-	VideoPath  string
+	VideoUrl   string
 	CoverUrl   string
 	CoverPath  string
 }
@@ -41,15 +43,26 @@ func (y *YoutubeAPI) GetSearchResults(query string) []SearchResult {
 	return results
 }
 
-func (y *YoutubeAPI) PlayVideo(query string) (SearchResult, error) {
-	res, err := y.handleSearchResults(query, 1)
+func (y *YoutubeAPI) DownloadVideo(query string) (string, error) {
+	results, err := y.handleSearchResults(query, 1)
 	if err != nil {
 		log.Println(err)
-		return SearchResult{}, err
+		return "", err
 	}
-
+	res := results[0]
 	log.Println(res)
-	return res[0], nil
+
+	videoPath := util.GetVideoPath(res.VideoTitle, res.VideoID)
+
+	ytdl := exec.Command("youtube-dl", "-f", "bestaudio[ext=m4a]", res.VideoUrl, "-o", videoPath)
+	go func() {
+		if err := ytdl.Run(); err != nil {
+			log.Printf("WARN: ytdl error: %v", err)
+		}
+	}()
+
+	log.Println(videoPath)
+	return videoPath, nil
 }
 
 func (y *YoutubeAPI) handleSearchResults(query string, maxResult int64) ([]SearchResult, error) {
@@ -74,7 +87,7 @@ func (y *YoutubeAPI) handleSearchResults(query string, maxResult int64) ([]Searc
 		searchResult := SearchResult{
 			VideoID:    item.Id.VideoId,
 			VideoTitle: item.Snippet.Title,
-			VideoPath:  youtubeUrlPrefix + item.Id.VideoId,
+			VideoUrl:   youtubeUrlPrefix + item.Id.VideoId,
 		}
 
 		results = append(results, searchResult)

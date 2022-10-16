@@ -5,16 +5,17 @@ import (
 	"container/list"
 	"encoding/binary"
 	"fmt"
-	"io"
-	"log"
-	"os/exec"
-	"strconv"
 
 	"github.com/Workiva/go-datastructures/queue"
 	"github.com/bwmarrin/discordgo"
 	"github.com/hraban/opus"
 	"github.com/puristt/discord-bot-go/config"
 	"github.com/puristt/discord-bot-go/youtube"
+	"io"
+	"log"
+	"os"
+	"os/exec"
+	"strconv"
 )
 
 const (
@@ -73,26 +74,42 @@ func PlayRequestedSong(query string, ds *discordgo.Session, dm *discordgo.Messag
 		return
 	}
 
-	videoPath, err := ytube.DownloadVideo(query)
+	res, err := ytube.GetVideoInfo(query)
 	if err != nil {
 		fmt.Errorf("error occured while downloading %v", err)
 	}
 
-	ffmpeg := exec.Command("ffmpeg", "-i", videoPath, "-f", "s16le", "-ar",
+	r, w := io.Pipe()
+	defer r.Close()
+
+	ytdl := exec.Command("youtube-dl", "-f", "bestaudio", res.VideoUrl, "-o-")
+	ytdl.Stdout = w         // youtube-dl PIPE INPUT
+	ytdl.Stderr = os.Stderr // show progress
+
+	go func() {
+		if err := ytdl.Run(); err != nil {
+			log.Printf("WARN: ytdl error: %v", err)
+		}
+	}()
+
+	ffmpeg := exec.Command("ffmpeg", "-i", "/dev/stdin", "-f", "s16le", "-ar",
 		strconv.Itoa(frameRate), "-ac", strconv.Itoa(channels), "pipe:1")
 
+	ffmpeg.Stdin = r // youtube-dl PIPE OUTPUT
 	ffmpegOut, err := ffmpeg.StdoutPipe()
 	if err != nil {
 		log.Printf("StdoutPipe err : %v", err)
 	}
 
-	ffmpegBuf := bufio.NewReaderSize(ffmpegOut, 16384)
+	ffmpegBuf := bufio.NewReaderSize(ffmpegOut, frameSize*channels)
 	if err := ffmpeg.Start(); err != nil {
 		log.Printf("Ffmpeg Pipe run err : %v", err)
 		return
 	}
 
 	sendChan := make(chan []int16, 2)
+	defer close(sendChan)
+
 	go func() {
 		SendPCM(vi.dvc, sendChan)
 	}()
@@ -193,7 +210,7 @@ func SendPCM(dvc *discordgo.VoiceConnection, pcm <-chan []int16) {
 		return
 	}
 
-	opusEnc, err := opus.NewEncoder(frameRate, 2, opus.AppAudio)
+	opusEnc, err := opus.NewEncoder(frameRate, channels, opus.AppAudio)
 	if err != nil {
 		log.Printf("Error while creating opus encoder : %v", err)
 		return

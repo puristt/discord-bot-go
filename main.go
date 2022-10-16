@@ -26,7 +26,7 @@ func main() {
 
 	youtubeAPI = youtube.NewYoutubeAPI(cfg.Youtube.ApiKey, ctx)
 	//youtubeAPI.GetSearchResults("boating")
-	//youtubeAPI.DownloadVideo("boatindsgssdagasddgsdgsadgsadgsagdsgdsadgsagdsagsdagdsgdsgdsgsaddsgasdjhfadjgfjhfgh1012g")
+	//youtubeAPI.GetVideoInfo("boatindsgssdagasddgsdgsadgsadgsagdsgdsadgsagdsagsdagdsgdsgdsgsaddsgasdjhfadjgfjhfgh1012g")
 	Init()
 
 }
@@ -39,7 +39,7 @@ func Init() {
 
 	dcSession.AddHandler(Router.OnMessageCreate)
 
-	if err := dcSession.Open(); err != nil {
+	if err := dcSession.Open(); err != nil { // TODO : webSocket open bug will be fixed
 		log.Printf("error while openin dc session : %v", err)
 		//dcSession.Close()
 	}

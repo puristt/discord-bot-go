@@ -3,12 +3,9 @@ package youtube
 import (
 	"context"
 	"errors"
-	"github.com/puristt/discord-bot-go/util"
-	"log"
-	"os/exec"
-
 	"google.golang.org/api/option"
 	"google.golang.org/api/youtube/v3"
+	"log"
 )
 
 const (
@@ -43,26 +40,16 @@ func (y *YoutubeAPI) GetSearchResults(query string) []SearchResult {
 	return results
 }
 
-func (y *YoutubeAPI) DownloadVideo(query string) (string, error) {
+func (y *YoutubeAPI) GetVideoInfo(query string) (SearchResult, error) {
 	results, err := y.handleSearchResults(query, 1)
 	if err != nil {
 		log.Println(err)
-		return "", err
+		return SearchResult{}, err
 	}
 	res := results[0]
 	log.Println(res)
 
-	videoPath := util.GetVideoPath(res.VideoTitle, res.VideoID)
-
-	ytdl := exec.Command("youtube-dl", "-f", "bestaudio[ext=m4a]", res.VideoUrl, "-o", videoPath)
-	go func() {
-		if err := ytdl.Run(); err != nil {
-			log.Printf("WARN: ytdl error: %v", err)
-		}
-	}()
-
-	log.Println(videoPath)
-	return videoPath, nil
+	return res, nil
 }
 
 func (y *YoutubeAPI) handleSearchResults(query string, maxResult int64) ([]SearchResult, error) {

@@ -24,8 +24,6 @@ type SearchResult struct {
 	VideoTitle string
 	Duration   string
 	VideoUrl   string
-	CoverUrl   string
-	CoverPath  string
 }
 
 func NewYoutubeAPI(developerKey string, ctx context.Context) *YoutubeAPI {
@@ -79,8 +77,6 @@ func (y *YoutubeAPI) handleSearchResults(query string, maxResult int64) ([]Searc
 
 		results = append(results, searchResult)
 	}
-	log.Println(results)
 
-	log.Println("-----------------------------------")
 	return results, nil
 }

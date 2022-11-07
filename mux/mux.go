@@ -4,7 +4,6 @@
 package mux
 
 import (
-	"log"
 	"strings"
 
 	"github.com/bwmarrin/discordgo"
@@ -62,12 +61,21 @@ func (m *Mux) OnMessageCreate(ds *discordgo.Session, dm *discordgo.MessageCreate
 		ds.ChannelMessageSend(dm.ChannelID, "Gaza geldim, hizmete hazirim!")
 	}
 
-	if strings.HasPrefix(dm.Content, "!play") {
-		log.Println("yey")
-		query := strings.Trim(dm.Content, "!play ")
+	if strings.HasPrefix(dm.Content, "-play") {
+		query := strings.Trim(dm.Content, "-play ")
 		if strings.Compare(query, "") == 0 {
 			return
 		}
-		otobot.PlayRequestedSong(query, ds, dm)
+		otobot.PlaySong(query, dm)
+	}
+
+	//stop command stops playing song
+	if strings.Compare(dm.Content, "-stop") == 0 {
+		otobot.StopSong(dm)
+	}
+
+	//skip command skips playing song
+	if strings.Compare(dm.Content, "-skip") == 0 {
+		otobot.SkipSong(dm)
 	}
 }

@@ -78,4 +78,8 @@ func (m *Mux) OnMessageCreate(ds *discordgo.Session, dm *discordgo.MessageCreate
 	if strings.Compare(dm.Content, "-skip") == 0 {
 		otobot.SkipSong(dm)
 	}
+
+	if strings.Compare(dm.Content, "-showq") == 0 {
+		otobot.ShowPlayQueue(dm)
+	}
 }

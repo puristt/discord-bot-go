@@ -73,6 +73,7 @@ func (y *YoutubeAPI) handleSearchResults(query string, maxResult int64) ([]Searc
 			VideoID:    item.Id.VideoId,
 			VideoTitle: item.Snippet.Title,
 			VideoUrl:   youtubeUrlPrefix + item.Id.VideoId,
+			// TODO: Getting Duration info will be implemented
 		}
 
 		results = append(results, searchResult)

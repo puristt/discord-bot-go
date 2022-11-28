@@ -2,48 +2,38 @@ package otobot
 
 import (
 	"bufio"
-	"container/list"
 	"encoding/binary"
 	"fmt"
-
 	"github.com/bwmarrin/discordgo"
 	"github.com/hraban/opus"
 	"github.com/puristt/discord-bot-go/config"
+	"github.com/puristt/discord-bot-go/model"
+	"github.com/puristt/discord-bot-go/queue"
 	"github.com/puristt/discord-bot-go/youtube"
 	"io"
 	"log"
 	"os"
 	"os/exec"
 	"strconv"
+	"time"
 )
 
 const (
-	channels     int = 2 // 1 for mono, 2 for stereo
-	frameRate    int = 48000
-	frameSize    int = 960                 // uint16 size of each audio frame
-	maxBytes     int = (frameSize * 2) * 2 // max size of opus data
-	maxQueueSize int = 50
+	channels     int   = 2 // 1 for mono, 2 for stereo
+	frameRate    int   = 48000
+	frameSize    int   = 960                 // uint16 size of each audio frame
+	maxBytes     int   = (frameSize * 2) * 2 // max size of opus data
+	maxQueueSize int64 = 50
 )
 
 type VoiceInstance struct {
-	dvc             *discordgo.VoiceConnection
-	session         *discordgo.Session
-	stop            bool
-	skip            bool
-	isPlaying       bool
-	playQueue       []Song
-	nowPlaying      Song
-	playHistoryList *list.List
-}
-
-type Song struct { // TODO : naming will be refactored
-	title     string
-	artist    string
-	songPath  string
-	videoUrl  string
-	coverPath string
-	videoID   string
-	duration  string
+	dvc        *discordgo.VoiceConnection
+	session    *discordgo.Session
+	stop       bool
+	skip       bool
+	isPlaying  bool
+	playQueue  *queue.Queue
+	nowPlaying model.Song
 }
 
 var (
@@ -58,14 +48,13 @@ func InitOtobot(config *config.Config, s *discordgo.Session, youtubeAPI *youtube
 	cfg = config
 
 	vi = &VoiceInstance{
-		session:         s,
-		dvc:             nil,
-		stop:            false,
-		skip:            false,
-		isPlaying:       false,
-		nowPlaying:      Song{},
-		playQueue:       createPlayQueue(),
-		playHistoryList: list.New(),
+		session:    s,
+		dvc:        nil,
+		stop:       false,
+		skip:       false,
+		isPlaying:  false,
+		nowPlaying: model.Song{},
+		playQueue:  createPlayQueue(),
 	}
 }
 
@@ -74,22 +63,25 @@ func PlaySong(query string, dm *discordgo.MessageCreate) {
 		return
 	}
 
-	res, err := ytube.GetVideoInfo(query)
+	res, err := ytube.GetVideoInfo(query) // TODO : this method uses a lot of cost https://developers.google.com/youtube/v3/determine_quota_cost
 	if err != nil {
 		fmt.Errorf("error occured while downloading %v", err)
 	}
 
-	song := Song{
-		title:    res.VideoTitle,
-		videoID:  res.VideoID,
-		videoUrl: res.VideoUrl,
+	song := model.Song{
+		Title:    res.VideoTitle,
+		VideoID:  res.VideoID,
+		VideoUrl: res.VideoUrl,
 	}
-	if len(vi.playQueue) == 0 {
-		vi.session.ChannelMessageSend(dm.ChannelID, "tamamdir!")
-		vi.playQueue = append(vi.playQueue, song)
-		playAudio(song)
+
+	vi.session.ChannelMessageSend(dm.ChannelID, "tamamdir!")
+
+	if vi.playQueue.Empty() {
+		log.Printf("queue empty : %v", vi.playQueue)
+		vi.playQueue.Enqueue(song) // TODO : if playAudio method returns an error, song should not be enqueued
+		go vi.playQueueFunc(dm.ChannelID)
 	} else {
-		vi.playQueue = append(vi.playQueue, song)
+		vi.playQueue.Enqueue(song)
 		log.Printf("queue : %v ", vi.playQueue)
 	}
 }
@@ -129,6 +121,20 @@ func SkipSong(dm *discordgo.MessageCreate) {
 			vi.skip = true // set skip flag true
 			return
 		}
+	}
+}
+
+func ShowPlayQueue(dm *discordgo.MessageCreate) {
+	if vi.playQueue.Empty() {
+		vi.session.ChannelMessageSend(dm.ChannelID, "Play queue is empty.")
+		return
+	}
+
+	songs := vi.playQueue.PeekAll()
+	err := vi.createAndSendEmbedShowPlayQueueMessage(songs, dm.ChannelID)
+	if err != nil {
+		log.Printf("error while Show embed playqueue message : %v", err)
+		return
 	}
 }
 
@@ -202,17 +208,50 @@ func (vi *VoiceInstance) joinVoiceChannel(dm *discordgo.MessageCreate, dg *disco
 	return false
 }
 
-func playAudio(res Song) {
-	r, w := io.Pipe()
-	defer r.Close()
+func (vi *VoiceInstance) playQueueFunc(channelID string) {
+	if err := vi.dvc.Speaking(true); err != nil {
+		log.Printf("Bot set speaking err : %v", err)
+	}
 
-	ytdl := exec.Command("youtube-dl", "-f", "bestaudio", res.videoUrl, "-o-")
+	// TODO: skip is working correctly, but after all songs played in the queue, if you want to play song again, it throws error
+	playStatus := make(chan int)
+	for {
+		if vi.isPlaying == false && !vi.playQueue.Empty() {
+			vi.isPlaying = true // TODO : IsPlaying prop might not be necessary. Will be checked.
+			vi.processPlayQueue(playStatus, channelID)
+		}
+
+		/*status := <-playStatus
+		if status == 1 {
+			log.Println("PLAYQUEUEFUNC RETURNEDDD!!!!")
+			return
+		}*/
+	}
+}
+
+func (vi *VoiceInstance) processPlayQueue(playStatus chan<- int, channelID string) {
+	vi.nowPlaying = vi.playQueue.Front()
+
+	// TODO : NowPlayingEmbed message will be implemented
+	if err := vi.createAndSendEmbedNowPlayingMessage(&vi.nowPlaying, channelID); err != nil {
+		log.Println(err)
+	}
+
+	vi.playAudio(vi.nowPlaying, playStatus) // TODO: this can be async
+}
+
+func (vi *VoiceInstance) playAudio(res model.Song, s chan<- int) {
+	r, w := io.Pipe()
+
+	ytdl := exec.Command("yt-dlp", "-f", "bestaudio", res.VideoUrl, "-o-")
 	ytdl.Stdout = w         // youtube-dl PIPE INPUT
 	ytdl.Stderr = os.Stderr // show progress
 	go func() {
 		if err := ytdl.Run(); err != nil {
 			log.Printf("WARN: ytdl error: %v", err)
 		}
+		log.Println("ytdl run command finished!")
+		defer r.Close()
 	}()
 
 	ffmpeg := exec.Command("ffmpeg", "-i", "/dev/stdin", "-f", "s16le", "-ar",
@@ -223,7 +262,7 @@ func playAudio(res Song) {
 		log.Printf("StdoutPipe err : %v", err)
 	}
 
-	ffmpegBuf := bufio.NewReaderSize(ffmpegOut, frameSize*channels)
+	ffmpegBuf := bufio.NewReaderSize(ffmpegOut, 16384)
 	if err := ffmpeg.Start(); err != nil {
 		log.Printf("Ffmpeg Pipe run err : %v", err)
 		return
@@ -236,13 +275,20 @@ func playAudio(res Song) {
 		sendPCM(vi.dvc, sendChan)
 	}()
 
-	vi.isPlaying = true
 	for {
 		// read data from ffmpeg stdout
 		audioBuf := make([]int16, frameSize*channels)
 		err = binary.Read(ffmpegBuf, binary.LittleEndian, &audioBuf)
 		if err == io.EOF || err == io.ErrUnexpectedEOF {
-			vi.playQueue = vi.playQueue[1:]
+			vi.playQueue.Dequeue()
+			vi.isPlaying = false
+
+			if vi.playQueue.Empty() {
+				if err := ffmpeg.Process.Kill(); err != nil {
+					log.Printf("ffmpeg process killing error : %v", err)
+				}
+				s <- 1
+			}
 			return
 		}
 		if err != nil {
@@ -256,24 +302,33 @@ func playAudio(res Song) {
 		}
 
 		if vi.stop == true {
+			vi.isPlaying = false
 			vi.stop = false
-			if err := ytdl.Process.Kill(); err != nil {
+			if err := ffmpeg.Process.Kill(); err != nil {
 				log.Printf("ytdl process killing error : %v", err)
 			}
-			vi.isPlaying = false
+			vi.playQueue.Dispose()
+			s <- 1
+
 			return
 		}
 
 		if vi.skip == true {
-			if vi.isPlaying == true {
-				if len(vi.playQueue) != 0 {
-					vi.skip = false
-					/*if err := ytdl.Process.Kill(); err != nil {
-						log.Printf("ytdl process killing error : %v", err)
-					}*/
-					vi.playQueue = vi.playQueue[1:]
-					log.Printf("slice capacity : %v  ---- slice length : %v", cap(vi.playQueue), len(vi.playQueue))
+			vi.skip = false
+			vi.playQueue.Dequeue()
+
+			if vi.isPlaying == true && !vi.playQueue.Empty() {
+				vi.isPlaying = false
+				if err := ffmpeg.Process.Kill(); err != nil {
+					log.Printf("ffmpeg process killing error : %v", err)
 				}
+				return
+			}
+
+			if vi.isPlaying == true && vi.playQueue.Empty() {
+				vi.isPlaying = false
+				s <- 1
+				return
 			}
 		}
 	}
@@ -312,7 +367,56 @@ func sendPCM(dvc *discordgo.VoiceConnection, pcm <-chan []int16) {
 	}
 }
 
-func createPlayQueue() []Song {
-	newQueue := make([]Song, 0, maxQueueSize)
-	return newQueue
+func (vi *VoiceInstance) createAndSendEmbedNowPlayingMessage(song *model.Song, channelID string) error {
+	embedMsg := &discordgo.MessageEmbed{
+		Author: &discordgo.MessageEmbedAuthor{},
+		Color:  0x26e232,
+		Fields: []*discordgo.MessageEmbedField{
+			{
+				Name:   "Now Playing",
+				Value:  song.Title,
+				Inline: false,
+			},
+		},
+		Timestamp: time.Now().Format(time.RFC3339),
+	}
+
+	_, err := vi.session.ChannelMessageSendEmbed(channelID, embedMsg)
+	if err != nil {
+		return fmt.Errorf("error occured while sending now playing embed message : %v", err)
+	}
+	return nil
+}
+
+func (vi *VoiceInstance) createAndSendEmbedShowPlayQueueMessage(songs []model.Song, channelID string) error {
+
+	var msgEmbedFields []*discordgo.MessageEmbedField
+
+	counter := 1
+	for _, song := range songs {
+		embedField := &discordgo.MessageEmbedField{
+			Name:   strconv.Itoa(counter) + ")",
+			Value:  song.Title,
+			Inline: false,
+		}
+		msgEmbedFields = append(msgEmbedFields, embedField)
+		counter++
+	}
+
+	embedMsg := &discordgo.MessageEmbed{
+		Title:     "Play Queue:",
+		Color:     0xff5733,
+		Fields:    msgEmbedFields,
+		Timestamp: time.Now().Format(time.RFC3339),
+	}
+
+	_, err := vi.session.ChannelMessageSendEmbed(channelID, embedMsg)
+	if err != nil {
+		return fmt.Errorf("error occured while sending now playing embed message : %v", err)
+	}
+	return nil
+}
+
+func createPlayQueue() *queue.Queue {
+	return queue.New(maxQueueSize)
 }

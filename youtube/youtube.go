@@ -3,6 +3,8 @@ package youtube
 import (
 	"context"
 	"errors"
+	"fmt"
+	"github.com/puristt/discord-bot-go/util"
 	"google.golang.org/api/option"
 	"google.golang.org/api/youtube/v3"
 	"log"
@@ -10,7 +12,7 @@ import (
 
 const (
 	defaultPlaylistItemCount int64  = 20
-	maxResults               int64  = 25
+	maxResults               int64  = 20
 	youtubeUrlPrefix         string = "https://www.youtube.com/watch?v="
 )
 
@@ -34,7 +36,7 @@ func NewYoutubeAPI(developerKey string, ctx context.Context) *YoutubeAPI {
 }
 
 func (y *YoutubeAPI) GetSearchResults(query string) []SearchResult {
-	results, _ := y.handleSearchResults(query, maxResults)
+	results, _ := y.handleSearchResults(query, maxResults/2)
 	return results
 }
 
@@ -50,6 +52,7 @@ func (y *YoutubeAPI) GetVideoInfo(query string) (SearchResult, error) {
 	return res, nil
 }
 
+// TODO: Is Valid YouTube url control will be added
 func (y *YoutubeAPI) handleSearchResults(query string, maxResult int64) ([]SearchResult, error) {
 	service, err := youtube.NewService(y.Context, option.WithAPIKey(y.DeveloperKey))
 	if err != nil {
@@ -60,7 +63,6 @@ func (y *YoutubeAPI) handleSearchResults(query string, maxResult int64) ([]Searc
 	call := service.Search.List([]string{"id", "snippet"}).Q(query).MaxResults(maxResult)
 	resp, err := call.Do()
 	if err != nil {
-		log.Println(err)
 		return results, err
 	}
 
@@ -68,16 +70,47 @@ func (y *YoutubeAPI) handleSearchResults(query string, maxResult int64) ([]Searc
 		return nil, errors.New("No results found")
 	}
 
+	var videoIds []string
 	for _, item := range resp.Items {
+		videoIds = append(videoIds, item.Id.VideoId)
+	}
+
+	durations, err := y.GetDurationsByIds(videoIds)
+	if err != nil {
+		return results, err
+	}
+
+	for i, item := range resp.Items {
 		searchResult := SearchResult{
 			VideoID:    item.Id.VideoId,
 			VideoTitle: item.Snippet.Title,
 			VideoUrl:   youtubeUrlPrefix + item.Id.VideoId,
-			// TODO: Getting Duration info will be implemented
+			Duration:   durations[i],
+			// TODO: Video cover image can be obtained
 		}
 
 		results = append(results, searchResult)
 	}
 
 	return results, nil
+}
+
+func (y *YoutubeAPI) GetDurationsByIds(ids []string) ([]string, error) {
+	var durations []string
+	service, err := youtube.NewService(y.Context, option.WithAPIKey(y.DeveloperKey))
+	if err != nil {
+		log.Fatalf("Error while creating new Youtube Client : %v", err)
+	}
+
+	call := service.Videos.List([]string{"id", "contentDetails"}).Id(ids...)
+	resp, err := call.Do()
+	if err != nil {
+		return durations, fmt.Errorf("error while getting video duration by id : %v", err)
+	}
+
+	for _, item := range resp.Items {
+		durations = append(durations, util.ParseISO8601(item.ContentDetails.Duration))
+	}
+
+	return durations, nil
 }

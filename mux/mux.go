@@ -52,7 +52,7 @@ func (m *Mux) Route(pattern, desc string, cb HandlerFunc) (*Route, error) {
 // will receive all Discord messages and parse them for matches to registered
 // routes.
 func (m *Mux) OnMessageCreate(ds *discordgo.Session, dm *discordgo.MessageCreate) {
-	// This isn't required in this specific example but it's a good practice.
+	// This isn't required in this specific example, but it's a good practice.
 	if dm.Author.ID == ds.State.User.ID {
 		return
 	}
@@ -61,6 +61,7 @@ func (m *Mux) OnMessageCreate(ds *discordgo.Session, dm *discordgo.MessageCreate
 		ds.ChannelMessageSend(dm.ChannelID, "Gaza geldim, hizmete hazirim!")
 	}
 
+	//play command searches and plays a song with given text after '-play' prefix
 	if strings.HasPrefix(dm.Content, "-play") {
 		query := strings.Trim(dm.Content, "-play ")
 		if strings.Compare(query, "") == 0 {
@@ -69,7 +70,16 @@ func (m *Mux) OnMessageCreate(ds *discordgo.Session, dm *discordgo.MessageCreate
 		otobot.PlaySong(query, dm)
 	}
 
-	//stop command stops playing song
+	//search command searches first 20 result from YouTube
+	if strings.HasPrefix(dm.Content, "-search") {
+		query := strings.Trim(dm.Content, "-search ")
+		if strings.Compare(query, "") == 0 {
+			return
+		}
+		otobot.SearchSong(query, dm)
+	}
+
+	//stop command stops playing song and resets play queue
 	if strings.Compare(dm.Content, "-stop") == 0 {
 		otobot.StopSong(dm)
 	}
@@ -79,6 +89,7 @@ func (m *Mux) OnMessageCreate(ds *discordgo.Session, dm *discordgo.MessageCreate
 		otobot.SkipSong(dm)
 	}
 
+	//showq command shows play queue
 	if strings.Compare(dm.Content, "-showq") == 0 {
 		otobot.ShowPlayQueue(dm)
 	}

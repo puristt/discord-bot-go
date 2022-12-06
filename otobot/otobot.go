@@ -72,6 +72,7 @@ func PlaySong(query string, dm *discordgo.MessageCreate) {
 		Title:    res.VideoTitle,
 		VideoID:  res.VideoID,
 		VideoUrl: res.VideoUrl,
+		Duration: res.Duration,
 	}
 
 	vi.session.ChannelMessageSend(dm.ChannelID, "tamamdir!")
@@ -83,6 +84,30 @@ func PlaySong(query string, dm *discordgo.MessageCreate) {
 	} else {
 		vi.playQueue.Enqueue(song)
 		log.Printf("queue : %v ", vi.playQueue)
+	}
+}
+
+func SearchSong(query string, dm *discordgo.MessageCreate) {
+	start := time.Now()
+	results := ytube.GetSearchResults(query)
+	elapsed := time.Since(start)
+	log.Printf("########### Time elapsed : %v", elapsed)
+
+	var songs []model.Song
+	for _, res := range results { // mapping YouTube search results to song struct
+		song := model.Song{
+			Title:    res.VideoTitle,
+			VideoID:  res.VideoID,
+			VideoUrl: res.VideoUrl,
+			Duration: res.Duration,
+		}
+		songs = append(songs, song)
+	}
+
+	err := vi.createAndSendEmbedShowSearchResultsMessage(songs, dm.ChannelID)
+	if err != nil {
+		log.Printf("error while showing search results : %v", err)
+		return
 	}
 }
 
@@ -367,6 +392,7 @@ func sendPCM(dvc *discordgo.VoiceConnection, pcm <-chan []int16) {
 	}
 }
 
+// TODO : this will be refactored. It should create embed message once and update every time
 func (vi *VoiceInstance) createAndSendEmbedNowPlayingMessage(song *model.Song, channelID string) error {
 	embedMsg := &discordgo.MessageEmbed{
 		Author: &discordgo.MessageEmbedAuthor{},
@@ -374,7 +400,7 @@ func (vi *VoiceInstance) createAndSendEmbedNowPlayingMessage(song *model.Song, c
 		Fields: []*discordgo.MessageEmbedField{
 			{
 				Name:   "Now Playing",
-				Value:  song.Title,
+				Value:  song.Title + "\n" + " Duration : " + song.Duration,
 				Inline: false,
 			},
 		},
@@ -388,25 +414,12 @@ func (vi *VoiceInstance) createAndSendEmbedNowPlayingMessage(song *model.Song, c
 	return nil
 }
 
+// TODO : this will be refactored. It should create embed message once and update every time
 func (vi *VoiceInstance) createAndSendEmbedShowPlayQueueMessage(songs []model.Song, channelID string) error {
-
-	var msgEmbedFields []*discordgo.MessageEmbedField
-
-	counter := 1
-	for _, song := range songs {
-		embedField := &discordgo.MessageEmbedField{
-			Name:   strconv.Itoa(counter) + ")",
-			Value:  song.Title,
-			Inline: false,
-		}
-		msgEmbedFields = append(msgEmbedFields, embedField)
-		counter++
-	}
-
 	embedMsg := &discordgo.MessageEmbed{
 		Title:     "Play Queue:",
 		Color:     0xff5733,
-		Fields:    msgEmbedFields,
+		Fields:    createMessageEmbedFields(songs),
 		Timestamp: time.Now().Format(time.RFC3339),
 	}
 
@@ -415,6 +428,38 @@ func (vi *VoiceInstance) createAndSendEmbedShowPlayQueueMessage(songs []model.So
 		return fmt.Errorf("error occured while sending now playing embed message : %v", err)
 	}
 	return nil
+}
+
+func (vi *VoiceInstance) createAndSendEmbedShowSearchResultsMessage(songs []model.Song, channelID string) error {
+	embedMsg := &discordgo.MessageEmbed{
+		Author:      &discordgo.MessageEmbedAuthor{},
+		Title:       "Search Results:",
+		Description: "First 10 Results Are Showing",
+		Color:       0x3498DB,
+		Fields:      createMessageEmbedFields(songs),
+		Timestamp:   time.Now().Format(time.RFC3339),
+	}
+
+	_, err := vi.session.ChannelMessageSendEmbed(channelID, embedMsg)
+	if err != nil {
+		return fmt.Errorf("error occured while sending search results embed message : %v", err)
+	}
+	return nil
+}
+
+func createMessageEmbedFields(songs []model.Song) []*discordgo.MessageEmbedField {
+	var msgEmbedFields []*discordgo.MessageEmbedField
+
+	for i, song := range songs {
+		i++
+		embedField := &discordgo.MessageEmbedField{
+			Name:   strconv.Itoa(i) + ")  " + song.Title + "\n" + " Duration : " + song.Duration,
+			Value:  "Video Url : " + song.VideoUrl,
+			Inline: false,
+		}
+		msgEmbedFields = append(msgEmbedFields, embedField)
+	}
+	return msgEmbedFields
 }
 
 func createPlayQueue() *queue.Queue {

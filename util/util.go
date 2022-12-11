@@ -2,10 +2,8 @@ package util
 
 import (
 	"log"
-	"path"
 	"regexp"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -15,17 +13,12 @@ const (
 
 var (
 	durationRegex = `P(?P<years>\d+Y)?(?P<months>\d+M)?(?P<days>\d+D)?T?(?P<hours>\d+H)?(?P<minutes>\d+M)?(?P<seconds>\d+S)?`
+
+	// YouTube url regex
+	yTubeUrlRegex = `^(?:https?\:\/\/)?(?:www\.)?(?:(?:youtube\.com\/watch\?v=)|(?:youtu.be\/))([a-zA-Z0-9\-_]{11})+.*$|^(?:https:\/\/www.youtube.com\/playlist\?list=)([a-zA-Z0-9\-_].*).*$`
+	// YouTube playlist url regex
+	yTubePlaylistUrlRegex = `^(?:https:\/\/www.youtube.com\/playlist\?list=)([a-zA-Z0-9\-_]{34}).*$`
 )
-
-// FormatVideoTitle formats given string appropriate for file name.
-func FormatVideoTitle(videoTitle string) string {
-	newTitle := strings.TrimSpace(videoTitle)
-
-	strReplacer := strings.NewReplacer("/", "_", "-", "_", ",", "_", " ", "", "'", "")
-	newTitle = strReplacer.Replace(newTitle)
-
-	return newTitle
-}
 
 // ParseISO8601 takes a duration in format ISO8601 and parses to
 // MM:SS format.
@@ -67,11 +60,19 @@ func parseInt64(value string) int64 {
 	return int64(parsed)
 }
 
-// GetVideoPath returns formatted version of the given video title and video id
-// as full file video path.
-func GetVideoPath(videoTitle string, videoID string) string {
-	formattedTitlePath := FormatVideoTitle(videoTitle) + "_" + videoID + ".m4a"
+func IsValidYoutubeUrl(url string) bool {
+	re := regexp.MustCompile(yTubeUrlRegex)
+	if re.MatchString(url) {
+		return true
+	}
+	return false
+}
 
-	formattedTitleFullPath := path.Join(YoutubeSongPath, formattedTitlePath)
-	return formattedTitleFullPath
+func ExtractYoutubePlaylistId(url string) string {
+	re := regexp.MustCompile(yTubePlaylistUrlRegex)
+	matches := re.FindStringSubmatch(url)
+	if matches == nil {
+		return ""
+	}
+	return matches[1]
 }

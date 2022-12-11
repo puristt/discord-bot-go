@@ -9,6 +9,7 @@ import (
 	"github.com/puristt/discord-bot-go/config"
 	"github.com/puristt/discord-bot-go/model"
 	"github.com/puristt/discord-bot-go/queue"
+	"github.com/puristt/discord-bot-go/util"
 	"github.com/puristt/discord-bot-go/youtube"
 	"io"
 	"log"
@@ -37,14 +38,14 @@ type VoiceInstance struct {
 }
 
 var (
-	ytube *youtube.YoutubeAPI
+	yTube *youtube.YoutubeAPI
 	cfg   *config.Config
 	vi    *VoiceInstance
 )
 
 // InitOtobot initializes the discord bot.
 func InitOtobot(config *config.Config, s *discordgo.Session, youtubeAPI *youtube.YoutubeAPI) {
-	ytube = youtubeAPI
+	yTube = youtubeAPI
 	cfg = config
 
 	vi = &VoiceInstance{
@@ -58,14 +59,57 @@ func InitOtobot(config *config.Config, s *discordgo.Session, youtubeAPI *youtube
 	}
 }
 
+func PlayPlaylist(url string, dm *discordgo.MessageCreate) {
+	if !vi.validateMessageAndJoinVoiceChannel(dm) {
+		return
+	}
+
+	// when "-play some playlist" command has run, it disposes the play queue and starts to play playlist immediately
+	if !vi.playQueue.Empty() {
+		StopSong(dm)
+	}
+
+	playlistId := util.ExtractYoutubePlaylistId(url)
+	if playlistId == "" {
+		log.Printf("Given playlist url : %v", url)
+		vi.session.ChannelMessageSend(dm.ChannelID, "Given playlist URL is not valid!")
+		return
+	}
+
+	playListItems, err := yTube.GetPlaylistItems(playlistId)
+	if err != nil {
+		fmt.Errorf("error occured while getting playlist items %v", err)
+		return
+	}
+
+	for _, item := range playListItems {
+		song := model.Song{
+			Title:    item.VideoTitle,
+			VideoID:  item.VideoID,
+			VideoUrl: item.VideoUrl,
+			Duration: item.Duration,
+		}
+
+		if vi.playQueue.Empty() {
+			log.Printf("queue empty : %v", vi.playQueue)
+			vi.playQueue.Enqueue(song) // TODO : if playAudio method returns an error, song should not be enqueued
+			go vi.playQueueFunc(dm.ChannelID)
+		} else {
+			vi.playQueue.Enqueue(song)
+			log.Printf("queue : %v ", vi.playQueue)
+		}
+	}
+}
+
 func PlaySong(query string, dm *discordgo.MessageCreate) {
 	if !vi.validateMessageAndJoinVoiceChannel(dm) {
 		return
 	}
 
-	res, err := ytube.GetVideoInfo(query) // TODO : this method uses a lot of cost https://developers.google.com/youtube/v3/determine_quota_cost
+	res, err := yTube.GetVideoInfo(query) // TODO : this method uses a lot of cost https://developers.google.com/youtube/v3/determine_quota_cost
 	if err != nil {
-		fmt.Errorf("error occured while downloading %v", err)
+		fmt.Errorf("error occured while getting video info %v", err)
+		return
 	}
 
 	song := model.Song{
@@ -88,10 +132,7 @@ func PlaySong(query string, dm *discordgo.MessageCreate) {
 }
 
 func SearchSong(query string, dm *discordgo.MessageCreate) {
-	start := time.Now()
-	results := ytube.GetSearchResults(query)
-	elapsed := time.Since(start)
-	log.Printf("########### Time elapsed : %v", elapsed)
+	results := yTube.GetSearchResults(query)
 
 	var songs []model.Song
 	for _, res := range results { // mapping YouTube search results to song struct
@@ -238,12 +279,11 @@ func (vi *VoiceInstance) playQueueFunc(channelID string) {
 		log.Printf("Bot set speaking err : %v", err)
 	}
 
-	// TODO: skip is working correctly, but after all songs played in the queue, if you want to play song again, it throws error
 	playStatus := make(chan int)
 	for {
 		if vi.isPlaying == false && !vi.playQueue.Empty() {
-			vi.isPlaying = true // TODO : IsPlaying prop might not be necessary. Will be checked.
-			vi.processPlayQueue(playStatus, channelID)
+			vi.isPlaying = true                        // TODO : IsPlaying prop might not be necessary. Will be checked.
+			vi.processPlayQueue(playStatus, channelID) // TODO: goroutine control
 		}
 
 		/*status := <-playStatus

@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	defaultPlaylistItemCount int64  = 20
+	defaultPlaylistItemCount int64  = 25
 	maxResults               int64  = 20
 	youtubeUrlPrefix         string = "https://www.youtube.com/watch?v="
 )
@@ -52,7 +52,6 @@ func (y *YoutubeAPI) GetVideoInfo(query string) (SearchResult, error) {
 	return res, nil
 }
 
-// TODO: Is Valid YouTube url control will be added
 func (y *YoutubeAPI) handleSearchResults(query string, maxResult int64) ([]SearchResult, error) {
 	service, err := youtube.NewService(y.Context, option.WithAPIKey(y.DeveloperKey))
 	if err != nil {
@@ -75,17 +74,17 @@ func (y *YoutubeAPI) handleSearchResults(query string, maxResult int64) ([]Searc
 		videoIds = append(videoIds, item.Id.VideoId)
 	}
 
-	durations, err := y.GetDurationsByIds(videoIds)
+	durations, err := y.getDurationsByIds(videoIds)
 	if err != nil {
 		return results, err
 	}
 
-	for i, item := range resp.Items {
+	for _, item := range resp.Items {
 		searchResult := SearchResult{
 			VideoID:    item.Id.VideoId,
 			VideoTitle: item.Snippet.Title,
 			VideoUrl:   youtubeUrlPrefix + item.Id.VideoId,
-			Duration:   durations[i],
+			Duration:   durations[item.Id.VideoId],
 			// TODO: Video cover image can be obtained
 		}
 
@@ -95,8 +94,51 @@ func (y *YoutubeAPI) handleSearchResults(query string, maxResult int64) ([]Searc
 	return results, nil
 }
 
-func (y *YoutubeAPI) GetDurationsByIds(ids []string) ([]string, error) {
-	var durations []string
+func (y *YoutubeAPI) GetPlaylistItems(playlistId string) ([]SearchResult, error) {
+	service, err := youtube.NewService(y.Context, option.WithAPIKey(y.DeveloperKey))
+	if err != nil {
+		log.Fatalf("Error while creating new Youtube Client : %v", err)
+	}
+
+	var results []SearchResult
+	call := service.PlaylistItems.List([]string{"snippet"}).PlaylistId(playlistId).MaxResults(5)
+	playList, err := call.Do()
+	if err != nil {
+		return results, err
+	}
+
+	if len(playList.Items) == 0 {
+		return nil, errors.New("No results found")
+	}
+
+	var videoIds []string
+	for _, item := range playList.Items {
+		videoIds = append(videoIds, item.Snippet.ResourceId.VideoId)
+	}
+
+	durations, err := y.getDurationsByIds(videoIds)
+	if err != nil {
+		return results, err
+	}
+
+	for _, playListItem := range playList.Items {
+		searchResult := SearchResult{
+			VideoID:    playListItem.Snippet.ResourceId.VideoId,
+			VideoTitle: playListItem.Snippet.Title,
+			VideoUrl:   youtubeUrlPrefix + playListItem.Snippet.ResourceId.VideoId,
+			Duration:   durations[playListItem.Snippet.ResourceId.VideoId],
+			// TODO: Video cover image can be obtained
+		}
+
+		results = append(results, searchResult)
+	}
+
+	return results, nil
+}
+
+func (y *YoutubeAPI) getDurationsByIds(ids []string) (map[string]string, error) {
+	durations := make(map[string]string, len(ids))
+
 	service, err := youtube.NewService(y.Context, option.WithAPIKey(y.DeveloperKey))
 	if err != nil {
 		log.Fatalf("Error while creating new Youtube Client : %v", err)
@@ -109,7 +151,7 @@ func (y *YoutubeAPI) GetDurationsByIds(ids []string) ([]string, error) {
 	}
 
 	for _, item := range resp.Items {
-		durations = append(durations, util.ParseISO8601(item.ContentDetails.Duration))
+		durations[item.Id] = util.ParseISO8601(item.ContentDetails.Duration)
 	}
 
 	return durations, nil

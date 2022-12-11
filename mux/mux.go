@@ -4,6 +4,7 @@
 package mux
 
 import (
+	"github.com/puristt/discord-bot-go/util"
 	"strings"
 
 	"github.com/bwmarrin/discordgo"
@@ -67,10 +68,21 @@ func (m *Mux) OnMessageCreate(ds *discordgo.Session, dm *discordgo.MessageCreate
 		if strings.Compare(query, "") == 0 {
 			return
 		}
+
+		if util.IsValidYoutubeUrl(query) { // TODO : not valid url check will be improved
+			if strings.Contains(query, "playlist") {
+				otobot.PlayPlaylist(query, dm)
+			} else {
+				otobot.PlaySong(query, dm)
+			}
+			return
+		}
+
 		otobot.PlaySong(query, dm)
+		return
 	}
 
-	//search command searches first 20 result from YouTube
+	//search command searches first 10 result from YouTube
 	if strings.HasPrefix(dm.Content, "-search") {
 		query := strings.Trim(dm.Content, "-search ")
 		if strings.Compare(query, "") == 0 {

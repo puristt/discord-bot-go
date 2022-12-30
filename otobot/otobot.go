@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"github.com/bwmarrin/discordgo"
 	"github.com/hraban/opus"
-	"github.com/puristt/discord-bot-go/config"
 	"github.com/puristt/discord-bot-go/model"
 	"github.com/puristt/discord-bot-go/queue"
 	"github.com/puristt/discord-bot-go/util"
@@ -28,34 +27,36 @@ const (
 )
 
 type VoiceInstance struct {
-	dvc        *discordgo.VoiceConnection
-	session    *discordgo.Session
-	stop       bool
-	skip       bool
-	isPlaying  bool
-	playQueue  *queue.Queue
-	nowPlaying model.Song
+	dvc               *discordgo.VoiceConnection
+	session           *discordgo.Session
+	stop              bool
+	skip              bool
+	isPlaying         bool
+	isPlaylistPlaying bool
+	playQueue         *queue.Queue
+	nowPlaying        model.Song
 }
 
 var (
-	yTube *youtube.YoutubeAPI
-	cfg   *config.Config
-	vi    *VoiceInstance
+	yTube             *youtube.YoutubeAPI
+	vi                *VoiceInstance
+	nextPageToken     = "" // YouTube playlist nextPage Token
+	currentPlaylistId = "" // YouTube current playlistId
 )
 
 // InitOtobot initializes the discord bot.
-func InitOtobot(config *config.Config, s *discordgo.Session, youtubeAPI *youtube.YoutubeAPI) {
+func InitOtobot(s *discordgo.Session, youtubeAPI *youtube.YoutubeAPI) {
 	yTube = youtubeAPI
-	cfg = config
 
 	vi = &VoiceInstance{
-		session:    s,
-		dvc:        nil,
-		stop:       false,
-		skip:       false,
-		isPlaying:  false,
-		nowPlaying: model.Song{},
-		playQueue:  createPlayQueue(),
+		session:           s,
+		dvc:               nil,
+		stop:              false,
+		skip:              false,
+		isPlaying:         false,
+		isPlaylistPlaying: false,
+		nowPlaying:        model.Song{},
+		playQueue:         createPlayQueue(),
 	}
 }
 
@@ -66,39 +67,21 @@ func PlayPlaylist(url string, dm *discordgo.MessageCreate) {
 
 	// when "-play some playlist" command has run, it disposes the play queue and starts to play playlist immediately
 	if !vi.playQueue.Empty() {
-		StopSong(dm)
+		if vi.isPlaylistPlaying {
+			vi.session.ChannelMessageSend(dm.ChannelID, "A playlist is already playing. Stop the playlist first!")
+			return
+		} else {
+			StopSong(dm)
+		}
 	}
 
 	playlistId := util.ExtractYoutubePlaylistId(url)
 	if playlistId == "" {
-		log.Printf("Given playlist url : %v", url)
 		vi.session.ChannelMessageSend(dm.ChannelID, "Given playlist URL is not valid!")
 		return
 	}
 
-	playListItems, err := yTube.GetPlaylistItems(playlistId)
-	if err != nil {
-		fmt.Errorf("error occured while getting playlist items %v", err)
-		return
-	}
-
-	for _, item := range playListItems {
-		song := model.Song{
-			Title:    item.VideoTitle,
-			VideoID:  item.VideoID,
-			VideoUrl: item.VideoUrl,
-			Duration: item.Duration,
-		}
-
-		if vi.playQueue.Empty() {
-			log.Printf("queue empty : %v", vi.playQueue)
-			vi.playQueue.Enqueue(song) // TODO : if playAudio method returns an error, song should not be enqueued
-			go vi.playQueueFunc(dm.ChannelID)
-		} else {
-			vi.playQueue.Enqueue(song)
-			log.Printf("queue : %v ", vi.playQueue)
-		}
-	}
+	vi.playPlaylist(playlistId, dm.ChannelID)
 }
 
 func PlaySong(query string, dm *discordgo.MessageCreate) {
@@ -108,7 +91,7 @@ func PlaySong(query string, dm *discordgo.MessageCreate) {
 
 	res, err := yTube.GetVideoInfo(query) // TODO : this method uses a lot of cost https://developers.google.com/youtube/v3/determine_quota_cost
 	if err != nil {
-		fmt.Errorf("error occured while getting video info %v", err)
+		vi.session.ChannelMessageSend(dm.ChannelID, err.Error())
 		return
 	}
 
@@ -117,22 +100,28 @@ func PlaySong(query string, dm *discordgo.MessageCreate) {
 		VideoID:  res.VideoID,
 		VideoUrl: res.VideoUrl,
 		Duration: res.Duration,
+		ImageUrl: res.VideoImageUrl,
+	}
+
+	if vi.isPlaylistPlaying {
+		vi.session.ChannelMessageSend(dm.ChannelID, "A playlist already playing. Stop the playlist first!")
+		return
 	}
 
 	vi.session.ChannelMessageSend(dm.ChannelID, "tamamdir!")
-
 	if vi.playQueue.Empty() {
-		log.Printf("queue empty : %v", vi.playQueue)
 		vi.playQueue.Enqueue(song) // TODO : if playAudio method returns an error, song should not be enqueued
 		go vi.playQueueFunc(dm.ChannelID)
 	} else {
 		vi.playQueue.Enqueue(song)
-		log.Printf("queue : %v ", vi.playQueue)
 	}
 }
 
 func SearchSong(query string, dm *discordgo.MessageCreate) {
-	results := yTube.GetSearchResults(query)
+	results, err := yTube.GetSearchResults(query)
+	if err != nil {
+		vi.session.ChannelMessageSend(dm.ChannelID, err.Error())
+	}
 
 	var songs []model.Song
 	for _, res := range results { // mapping YouTube search results to song struct
@@ -141,11 +130,12 @@ func SearchSong(query string, dm *discordgo.MessageCreate) {
 			VideoID:  res.VideoID,
 			VideoUrl: res.VideoUrl,
 			Duration: res.Duration,
+			ImageUrl: res.VideoImageUrl,
 		}
 		songs = append(songs, song)
 	}
 
-	err := vi.createAndSendEmbedShowSearchResultsMessage(songs, dm.ChannelID)
+	err = vi.createAndSendEmbedShowSearchResultsMessage(songs, dm.ChannelID)
 	if err != nil {
 		log.Printf("error while showing search results : %v", err)
 		return
@@ -274,38 +264,64 @@ func (vi *VoiceInstance) joinVoiceChannel(dm *discordgo.MessageCreate, dg *disco
 	return false
 }
 
+func (vi *VoiceInstance) playPlaylist(playlistId string, channelId string) {
+	playListItems, pageToken, err := yTube.GetPlaylistItems(playlistId, nextPageToken)
+	if err != nil {
+		fmt.Errorf("error occured while getting playlist items %v", err)
+		return
+	}
+
+	nextPageToken = pageToken
+	if currentPlaylistId == "" {
+		currentPlaylistId = playlistId
+
+	}
+	for _, item := range playListItems {
+		song := model.Song{
+			Title:    item.VideoTitle,
+			VideoID:  item.VideoID,
+			VideoUrl: item.VideoUrl,
+			Duration: item.Duration,
+		}
+
+		if vi.playQueue.Empty() {
+			vi.playQueue.Enqueue(song) // TODO : if playAudio method returns an error, song should not be enqueued
+			vi.isPlaylistPlaying = true
+			go vi.playQueueFunc(channelId)
+		} else {
+			vi.playQueue.Enqueue(song)
+		}
+	}
+}
+
 func (vi *VoiceInstance) playQueueFunc(channelID string) {
 	if err := vi.dvc.Speaking(true); err != nil {
 		log.Printf("Bot set speaking err : %v", err)
 	}
 
-	playStatus := make(chan int)
 	for {
 		if vi.isPlaying == false && !vi.playQueue.Empty() {
-			vi.isPlaying = true                        // TODO : IsPlaying prop might not be necessary. Will be checked.
-			vi.processPlayQueue(playStatus, channelID) // TODO: goroutine control
+			vi.isPlaying = true
+			vi.processPlayQueue(channelID)
 		}
 
-		/*status := <-playStatus
-		if status == 1 {
-			log.Println("PLAYQUEUEFUNC RETURNEDDD!!!!")
-			return
-		}*/
+		if vi.isPlaylistPlaying == true && nextPageToken != "" && vi.playQueue.Len() == 1 {
+			vi.playPlaylist(currentPlaylistId, channelID)
+		}
 	}
 }
 
-func (vi *VoiceInstance) processPlayQueue(playStatus chan<- int, channelID string) {
+func (vi *VoiceInstance) processPlayQueue(channelID string) {
 	vi.nowPlaying = vi.playQueue.Front()
 
-	// TODO : NowPlayingEmbed message will be implemented
 	if err := vi.createAndSendEmbedNowPlayingMessage(&vi.nowPlaying, channelID); err != nil {
 		log.Println(err)
 	}
 
-	vi.playAudio(vi.nowPlaying, playStatus) // TODO: this can be async
+	go vi.playAudio(vi.nowPlaying)
 }
 
-func (vi *VoiceInstance) playAudio(res model.Song, s chan<- int) {
+func (vi *VoiceInstance) playAudio(res model.Song) {
 	r, w := io.Pipe()
 
 	ytdl := exec.Command("yt-dlp", "-f", "bestaudio", res.VideoUrl, "-o-")
@@ -352,7 +368,6 @@ func (vi *VoiceInstance) playAudio(res model.Song, s chan<- int) {
 				if err := ffmpeg.Process.Kill(); err != nil {
 					log.Printf("ffmpeg process killing error : %v", err)
 				}
-				s <- 1
 			}
 			return
 		}
@@ -367,13 +382,15 @@ func (vi *VoiceInstance) playAudio(res model.Song, s chan<- int) {
 		}
 
 		if vi.stop == true {
+			vi.isPlaylistPlaying = false
 			vi.isPlaying = false
 			vi.stop = false
+			nextPageToken = ""
+			currentPlaylistId = ""
 			if err := ffmpeg.Process.Kill(); err != nil {
 				log.Printf("ytdl process killing error : %v", err)
 			}
 			vi.playQueue.Dispose()
-			s <- 1
 
 			return
 		}
@@ -387,12 +404,16 @@ func (vi *VoiceInstance) playAudio(res model.Song, s chan<- int) {
 				if err := ffmpeg.Process.Kill(); err != nil {
 					log.Printf("ffmpeg process killing error : %v", err)
 				}
+
 				return
 			}
 
 			if vi.isPlaying == true && vi.playQueue.Empty() {
 				vi.isPlaying = false
-				s <- 1
+				vi.isPlaylistPlaying = false
+				nextPageToken = ""
+				currentPlaylistId = ""
+
 				return
 			}
 		}
@@ -445,6 +466,9 @@ func (vi *VoiceInstance) createAndSendEmbedNowPlayingMessage(song *model.Song, c
 			},
 		},
 		Timestamp: time.Now().Format(time.RFC3339),
+		Image: &discordgo.MessageEmbedImage{
+			URL: song.ImageUrl,
+		},
 	}
 
 	_, err := vi.session.ChannelMessageSendEmbed(channelID, embedMsg)

@@ -1,6 +1,5 @@
 /*
 Package queue is basic queue implementation with slices.
-Note that this implementation is not thread-safe because it fulfills the requirement of this project.
 For simplicity, it also uses Song struct type instead of interface{} struct. If needed, it can be converted to interface.
 */
 package queue

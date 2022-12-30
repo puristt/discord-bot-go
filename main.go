@@ -14,8 +14,6 @@ import (
 	"github.com/puristt/discord-bot-go/youtube"
 )
 
-//https://github.com/hemreari/feanor-dcbot
-
 var cfg config.Config
 var Router = mux.New()
 var youtubeAPI *youtube.YoutubeAPI
@@ -40,7 +38,7 @@ func Init() {
 		log.Printf("error while openin dc session : %v", err)
 		//dcSession.Close()
 	}
-	otobot.InitOtobot(&cfg, dcSession, youtubeAPI)
+	otobot.InitOtobot(dcSession, youtubeAPI)
 	log.Println("Otobot is running. Press Ctrl-C to exit.")
 	sc := make(chan os.Signal, 1)
 	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt, os.Kill)

@@ -5,11 +5,11 @@ import (
 	"encoding/binary"
 	"fmt"
 	"github.com/bwmarrin/discordgo"
-	"github.com/hraban/opus"
 	"github.com/puristt/discord-bot-go/model"
 	"github.com/puristt/discord-bot-go/queue"
 	"github.com/puristt/discord-bot-go/util"
 	"github.com/puristt/discord-bot-go/youtube"
+	"gopkg.in/hraban/opus.v2"
 	"io"
 	"log"
 	"os"
@@ -66,7 +66,7 @@ func PlayPlaylist(url string, dm *discordgo.MessageCreate) {
 	}
 
 	// when "-play some playlist" command has run, it disposes the play queue and starts to play playlist immediately
-	if !vi.playQueue.Empty() {
+	if !vi.playQueue.Empty() && vi.isPlaying == true {
 		if vi.isPlaylistPlaying {
 			vi.session.ChannelMessageSend(dm.ChannelID, "A playlist is already playing. Stop the playlist first!")
 			return
@@ -102,19 +102,20 @@ func PlaySong(query string, dm *discordgo.MessageCreate) {
 		Duration: res.Duration,
 		ImageUrl: res.VideoImageUrl,
 	}
-
 	if vi.isPlaylistPlaying {
 		vi.session.ChannelMessageSend(dm.ChannelID, "A playlist already playing. Stop the playlist first!")
 		return
 	}
 
-	vi.session.ChannelMessageSend(dm.ChannelID, "tamamdir!")
 	if vi.playQueue.Empty() {
+		vi.session.ChannelMessageSend(dm.ChannelID, "tamamdir!")
 		vi.playQueue.Enqueue(song) // TODO : if playAudio method returns an error, song should not be enqueued
 		go vi.playQueueFunc(dm.ChannelID)
 	} else {
 		vi.playQueue.Enqueue(song)
 	}
+
+	return
 }
 
 func SearchSong(query string, dm *discordgo.MessageCreate) {
@@ -140,6 +141,7 @@ func SearchSong(query string, dm *discordgo.MessageCreate) {
 		log.Printf("error while showing search results : %v", err)
 		return
 	}
+	return
 }
 
 func StopSong(dm *discordgo.MessageCreate) {
@@ -213,6 +215,7 @@ func (vi *VoiceInstance) validateMessageAndJoinVoiceChannel(dm *discordgo.Messag
 
 		return false
 	}
+
 	if !vi.joinVoiceChannel(dm, dg) {
 		return false
 	}
@@ -299,8 +302,15 @@ func (vi *VoiceInstance) playQueueFunc(channelID string) {
 		log.Printf("Bot set speaking err : %v", err)
 	}
 
+	defer func() {
+		vi.disconnectOtobot()
+	}()
 	for {
-		if vi.isPlaying == false && !vi.playQueue.Empty() {
+		if vi.isPlaying == false && vi.playQueue.Empty() {
+			return
+		}
+
+		if vi.isPlaying == false && !vi.playQueue.Empty() { // TODO : after -skip command, it plays 2 song simultaneously. Will be fixed
 			vi.isPlaying = true
 			vi.processPlayQueue(channelID)
 		}
@@ -318,7 +328,7 @@ func (vi *VoiceInstance) processPlayQueue(channelID string) {
 		log.Println(err)
 	}
 
-	go vi.playAudio(vi.nowPlaying)
+	vi.playAudio(vi.nowPlaying)
 }
 
 func (vi *VoiceInstance) playAudio(res model.Song) {
@@ -382,9 +392,10 @@ func (vi *VoiceInstance) playAudio(res model.Song) {
 		}
 
 		if vi.stop == true {
+			vi.stop = false
+
 			vi.isPlaylistPlaying = false
 			vi.isPlaying = false
-			vi.stop = false
 			nextPageToken = ""
 			currentPlaylistId = ""
 			if err := ffmpeg.Process.Kill(); err != nil {
@@ -511,6 +522,22 @@ func (vi *VoiceInstance) createAndSendEmbedShowSearchResultsMessage(songs []mode
 	return nil
 }
 
+// disconnectBot disconnects bot from the voice channel
+func (vi *VoiceInstance) disconnectOtobot() {
+	err := vi.dvc.Speaking(false)
+	if err != nil {
+		log.Println("Couldn't stop speaking", err)
+	}
+	vi.dvc.Disconnect()
+	log.Printf("Bot disconnected from the voice channel.\n")
+	vi.stop = false
+	vi.isPlaying = false
+	vi.isPlaylistPlaying = false
+	nextPageToken = ""
+	currentPlaylistId = ""
+	return
+}
+
 func createMessageEmbedFields(songs []model.Song) []*discordgo.MessageEmbedField {
 	var msgEmbedFields []*discordgo.MessageEmbedField
 
@@ -518,7 +545,7 @@ func createMessageEmbedFields(songs []model.Song) []*discordgo.MessageEmbedField
 		i++
 		embedField := &discordgo.MessageEmbedField{
 			Name:   strconv.Itoa(i) + ")  " + song.Title + "\n" + " Duration : " + song.Duration,
-			Value:  "Video Url : " + song.VideoUrl,
+			Value:  "Video Url : " + song.VideoUrl + "\n",
 			Inline: false,
 		}
 		msgEmbedFields = append(msgEmbedFields, embedField)

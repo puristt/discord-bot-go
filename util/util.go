@@ -7,10 +7,6 @@ import (
 	"time"
 )
 
-const (
-	YoutubeSongPath = "youtube/song"
-)
-
 var (
 	durationRegex = `P(?P<years>\d+Y)?(?P<months>\d+M)?(?P<days>\d+D)?T?(?P<hours>\d+H)?(?P<minutes>\d+M)?(?P<seconds>\d+S)?`
 

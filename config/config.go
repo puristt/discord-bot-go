@@ -1,10 +1,7 @@
 package config
 
 import (
-	"encoding/json"
-	"log"
 	"os"
-	"path/filepath"
 )
 
 type Config struct {
@@ -22,19 +19,13 @@ type YoutubeConfig struct {
 	ApiKey         string `json:"apiKey"`
 }
 
-func InitConfig(cfg *Config, cfgFileName string) {
-	configFileName, _ := filepath.Abs(cfgFileName)
-	log.Printf("Loading config : %v", configFileName)
-
-	configFile, err := os.Open(configFileName)
-	if err != nil {
-		log.Fatal("Error while openning file : ", err.Error())
-	}
-
-	defer configFile.Close()
-
-	jsonParser := json.NewDecoder(configFile)
-	if err := jsonParser.Decode(&cfg); err != nil {
-		log.Fatal("Config Decoding error : ", err.Error())
+func InitConfig() *Config {
+	return &Config{
+		Discord: DiscordConfig{
+			Token: os.Getenv("Discord_Token"),
+		},
+		Youtube: YoutubeConfig{
+			ApiKey: os.Getenv("Youtube_ApiKey"),
+		},
 	}
 }

@@ -13,7 +13,7 @@ RUN go build -o /bin/app .
 
 FROM alpine
 COPY --from=builder /bin/app /bin/app
-COPY --from=builder /src/config.json .
+COPY --from=builder /src/.env .
 
 # Necessary packages to play audio and opus codec
 RUN apk update && apk add pkgconfig gcc libc-dev \

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/joho/godotenv"
 	"log"
 	"os"
 	"os/signal"
@@ -14,19 +15,22 @@ import (
 	"github.com/puristt/discord-bot-go/youtube"
 )
 
-var cfg config.Config
 var Router = mux.New()
 var youtubeAPI *youtube.YoutubeAPI
 
 func main() {
-	ctx := context.Background()
-	config.InitConfig(&cfg, "config.json")
-	youtubeAPI = youtube.NewYoutubeAPI(cfg.Youtube.ApiKey, ctx)
-
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal("Error loading .env file")
+	}
 	Init()
 }
 
 func Init() {
+	ctx := context.Background()
+	cfg := config.InitConfig()
+	youtubeAPI = youtube.NewYoutubeAPI(cfg.Youtube.ApiKey, ctx)
+
 	dcSession, err := discordgo.New("Bot " + cfg.Discord.Token)
 	if err != nil {
 		log.Printf("Error while creating discord session: %v", err)

@@ -4,6 +4,7 @@ go 1.17
 
 require (
 	github.com/bwmarrin/discordgo v0.27.1
+	github.com/joho/godotenv v1.5.1
 	google.golang.org/api v0.122.0
 	gopkg.in/hraban/opus.v2 v2.0.0-20220302220929-eeacdbcb92d0
 )

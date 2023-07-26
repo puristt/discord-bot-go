@@ -58,8 +58,8 @@ func (m *Mux) OnMessageCreate(ds *discordgo.Session, dm *discordgo.MessageCreate
 		return
 	}
 
-	if strings.Contains("blitz", dm.Content) {
-		ds.ChannelMessageSend(dm.ChannelID, "Gaza geldim, hizmete hazirim!")
+	if strings.Compare(dm.Content, "-help") == 0 {
+		otobot.ShowHelpDialog(dm)
 	}
 
 	//play command searches and plays a song with given text after '-play' prefix

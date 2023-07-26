@@ -108,11 +108,12 @@ func PlaySong(query string, dm *discordgo.MessageCreate) {
 	}
 
 	if vi.playQueue.Empty() {
-		vi.session.ChannelMessageSend(dm.ChannelID, "tamamdir!")
+		vi.session.ChannelMessageSend(dm.ChannelID, "Got it!")
 		vi.playQueue.Enqueue(song) // TODO : if playAudio method returns an error, song should not be enqueued
 		go vi.playQueueFunc(dm.ChannelID)
 	} else {
 		vi.playQueue.Enqueue(song)
+		vi.createAndSendEmbedAddedToQueueMessage(song, dm.ChannelID)
 	}
 
 	return
@@ -194,6 +195,10 @@ func ShowPlayQueue(dm *discordgo.MessageCreate) {
 		log.Printf("error while Show embed playqueue message : %v", err)
 		return
 	}
+}
+
+func ShowHelpDialog(dm *discordgo.MessageCreate) {
+	vi.createAndSendEmbedHelpMessage(dm.ChannelID)
 }
 
 // validateMessageAndJoinVoiceChannel validates user message and checks if user is in any voice channel. Then joins
@@ -464,14 +469,29 @@ func sendPCM(dvc *discordgo.VoiceConnection, pcm <-chan []int16) {
 	}
 }
 
-// TODO : this will be refactored. It should create embed message once and update every time
-func (vi *VoiceInstance) createAndSendEmbedNowPlayingMessage(song *model.Song, channelID string) error {
+// disconnectBot disconnects bot from the voice channel
+func (vi *VoiceInstance) disconnectOtobot() {
+	err := vi.dvc.Speaking(false)
+	if err != nil {
+		log.Println("Couldn't stop speaking", err)
+	}
+	vi.dvc.Disconnect()
+	log.Printf("Bot disconnected from the voice channel.\n")
+	vi.stop = false
+	vi.isPlaying = false
+	vi.isPlaylistPlaying = false
+	nextPageToken = ""
+	currentPlaylistId = ""
+	return
+}
+
+func (vi *VoiceInstance) createAndSendEmbedAddedToQueueMessage(song model.Song, channelID string) error {
 	embedMsg := &discordgo.MessageEmbed{
 		Author: &discordgo.MessageEmbedAuthor{},
-		Color:  0x26e232,
+		Color:  0x145DA0,
 		Fields: []*discordgo.MessageEmbedField{
 			{
-				Name:   "Now Playing",
+				Name:   "Added to Play Queue!",
 				Value:  song.Title + "\n" + " Duration : " + song.Duration,
 				Inline: false,
 			},
@@ -479,6 +499,46 @@ func (vi *VoiceInstance) createAndSendEmbedNowPlayingMessage(song *model.Song, c
 		Timestamp: time.Now().Format(time.RFC3339),
 		Image: &discordgo.MessageEmbedImage{
 			URL: song.ImageUrl,
+		},
+	}
+
+	_, err := vi.session.ChannelMessageSendEmbed(channelID, embedMsg)
+	if err != nil {
+		return fmt.Errorf("error occured while sending now playing embed message : %v", err)
+	}
+	return nil
+}
+
+func (vi *VoiceInstance) createAndSendEmbedHelpMessage(channelID string) error {
+	embedMsg := &discordgo.MessageEmbed{
+		Author: &discordgo.MessageEmbedAuthor{},
+		Color:  0x145DA0,
+		Fields: []*discordgo.MessageEmbedField{
+			{
+				Name:   "-play Command",
+				Value:  "Searches and plays the first song with given text after '-play' prefix",
+				Inline: false,
+			},
+			{
+				Name:   "-search Command",
+				Value:  "Searches first 10 result from YouTube",
+				Inline: false,
+			},
+			{
+				Name:   "-showq Command",
+				Value:  "Shows play queue",
+				Inline: false,
+			},
+			{
+				Name:   "-skip Command",
+				Value:  "Skips playing song",
+				Inline: false,
+			},
+			{
+				Name:   "-stop Command",
+				Value:  "Stops playing song and resets play queue",
+				Inline: false,
+			},
 		},
 	}
 
@@ -505,6 +565,30 @@ func (vi *VoiceInstance) createAndSendEmbedShowPlayQueueMessage(songs []model.So
 	return nil
 }
 
+func (vi *VoiceInstance) createAndSendEmbedNowPlayingMessage(song *model.Song, channelID string) error {
+	embedMsg := &discordgo.MessageEmbed{
+		Author: &discordgo.MessageEmbedAuthor{},
+		Color:  0x26e232,
+		Fields: []*discordgo.MessageEmbedField{
+			{
+				Name:   "Now Playing",
+				Value:  song.Title + "\n" + " Duration : " + song.Duration,
+				Inline: false,
+			},
+		},
+		Timestamp: time.Now().Format(time.RFC3339),
+		Image: &discordgo.MessageEmbedImage{
+			URL: song.ImageUrl,
+		},
+	}
+
+	_, err := vi.session.ChannelMessageSendEmbed(channelID, embedMsg)
+	if err != nil {
+		return fmt.Errorf("error occured while sending now playing embed message : %v", err)
+	}
+	return nil
+}
+
 func (vi *VoiceInstance) createAndSendEmbedShowSearchResultsMessage(songs []model.Song, channelID string) error {
 	embedMsg := &discordgo.MessageEmbed{
 		Author:      &discordgo.MessageEmbedAuthor{},
@@ -520,22 +604,6 @@ func (vi *VoiceInstance) createAndSendEmbedShowSearchResultsMessage(songs []mode
 		return fmt.Errorf("error occured while sending search results embed message : %v", err)
 	}
 	return nil
-}
-
-// disconnectBot disconnects bot from the voice channel
-func (vi *VoiceInstance) disconnectOtobot() {
-	err := vi.dvc.Speaking(false)
-	if err != nil {
-		log.Println("Couldn't stop speaking", err)
-	}
-	vi.dvc.Disconnect()
-	log.Printf("Bot disconnected from the voice channel.\n")
-	vi.stop = false
-	vi.isPlaying = false
-	vi.isPlaylistPlaying = false
-	nextPageToken = ""
-	currentPlaylistId = ""
-	return
 }
 
 func createMessageEmbedFields(songs []model.Song) []*discordgo.MessageEmbedField {

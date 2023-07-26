@@ -29,7 +29,7 @@ It plays music from youtube with using [yt-dlp](https://github.com/yt-dlp/yt-dlp
 # Install discord-bot-go
 go get -u github.com/puristt/discord-bot-go
 ```
-- discord-bot-go loads necessary tokens from ".env" files. You should create ".env" file like below :
+- discord-bot-go loads necessary tokens from ".env" file. You must create ".env" file like below :
 
 ```bash
 Youtube_ApiKey={Your_Youtube_Token}

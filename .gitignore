@@ -2,3 +2,4 @@
 .idea
 
 #Env file
+.env

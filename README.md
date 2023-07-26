@@ -65,3 +65,7 @@ go run main.go
 ### -Showq Command
 
 ![play_command](images/showq_command.png)
+
+# TODOS
+
+- Spotify support can be added.
